@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Expense Tracker</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+/* ===== THEME VARIABLES ===== */
+:root{
+  --primary:#0f766e;
+  --bg:#f0fdf4;
+  --card:#ffffff;
+  --text:#064e3b;
+  --radius:12px;
+}
+
+[data-theme="dark"]{
+  --primary:#22d3ee;
+  --bg:#020617;
+  --card:#020617;
+  --text:#e5e7eb;
+}
+
+/* ===== BASE ===== */
+*{box-sizing:border-box;font-family:Segoe UI,system-ui,sans-serif}
+
+body{
+  margin:0;
+  padding:20px;
+  background:var(--bg);
+  color:var(--text);
+  transition:background .3s,color .3s;
+}
+
+.container{max-width:540px;margin:auto}
+
+.card{
+  background:var(--card);
+  padding:16px;
+  border-radius:var(--radius);
+  margin-bottom:16px;
+  box-shadow:0 8px 20px rgba(0,0,0,0.15);
+}
+
+h2{text-align:center;margin:0}
+
+input,button{
+  width:100%;
+  padding:10px;
+  margin-top:8px;
+  border-radius:8px;
+  border:1px solid #64748b;
+  background:transparent;
+  color:var(--text);
+}
+
+button{
+  background:var(--primary);
+  color:black;
+  border:none;
+  font-weight:600;
+  cursor:pointer;
+}
+
+.summary{
+  display:flex;
+  gap:10px;
+}
+
+.summary div{
+  flex:1;
+  background:rgba(255,255,255,0.1);
+  padding:12px;
+  border-radius:8px;
+  text-align:center;
+  font-weight:600;
+}
+
+ul{list-style:none;padding:0}
+
+li{
+  background:rgba(255,255,255,0.08);
+  padding:10px;
+  border-radius:6px;
+  margin-bottom:6px;
+  font-size:14px;
+}
+
+/* ===== PROFILE ===== */
+.profile-bar{
+  position:fixed;
+  top:16px;
+  right:16px;
+  cursor:pointer;
+  font-weight:600;
+  display:none;
+}
+
+.profile-menu{
+  position:absolute;
+  right:0;
+  top:28px;
+  background:var(--card);
+  border-radius:10px;
+  box-shadow:0 10px 25px rgba(0,0,0,.3);
+  display:none;
+  min-width:200px;
+}
+
+.profile-menu label{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:12px;
+}
+
+.profile-menu button{
+  width:100%;
+  background:#ef4444;
+  color:white;
+  border:none;
+  padding:12px;
+  font-weight:600;
+  cursor:pointer;
+}
+</style>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import {
+  getFirestore, collection, addDoc, getDocs, query, where,
+  doc, setDoc, getDoc
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import {
+  getAuth, createUserWithEmailAndPassword,
+  signInWithEmailAndPassword, signOut,
+  onAuthStateChanged,
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+/* FIREBASE */
+const app = initializeApp({
+  apiKey:"AIzaSyAv_RyMDv4nZ4bgQaGuyzupBGWx-8VSrG8",
+  authDomain:"expense-tracker-app-16113.firebaseapp.com",
+  projectId:"expense-tracker-app-16113"
+});
+const db = getFirestore(app);
+const auth = getAuth(app);
+
+/* 🌙 DARK MODE */
+const themeToggle = document.getElementById("themeToggle");
+
+function applyTheme(theme){
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("theme", theme);
+}
+
+const savedTheme = localStorage.getItem("theme") || "light";
+applyTheme(savedTheme);
+
+themeToggle.onchange = () => {
+  applyTheme(themeToggle.checked ? "dark" : "light");
+};
+
+/* DOM */
+const authDiv = document.getElementById("auth");
+const appDiv = document.getElementById("app");
+const profileBar = document.getElementById("profileBar");
+const profileMenu = document.getElementById("profileMenu");
+
+const email = document.getElementById("email");
+const password = document.getElementById("password");
+const staySignedIn = document.getElementById("staySignedIn");
+
+const incomeInput = document.getElementById("income");
+const amountInput = document.getElementById("amount");
+const categoryInput = document.getElementById("category");
+const detailInput = document.getElementById("detail");
+
+const incomeDisplay = document.getElementById("incomeDisplay");
+const spentDisplay = document.getElementById("spentDisplay");
+const balanceDisplay = document.getElementById("balanceDisplay");
+
+const expenseList = document.getElementById("expenseList");
+
+/* AUTH HELPERS */
+async function applyPersistence(){
+  await setPersistence(
+    auth,
+    staySignedIn.checked
+      ? browserLocalPersistence
+      : browserSessionPersistence
+  );
+}
+
+/* AUTH */
+document.getElementById("signup").onclick = async ()=>{
+  await applyPersistence();
+  await createUserWithEmailAndPassword(auth,email.value,password.value);
+};
+
+document.getElementById("login").onclick = async ()=>{
+  await applyPersistence();
+  await signInWithEmailAndPassword(auth,email.value,password.value);
+
+  if ("Notification" in window && Notification.permission === "default") {
+    Notification.requestPermission();
+  }
+};
+
+document.getElementById("signoutBtn").onclick = ()=>signOut(auth);
+
+document.getElementById("profileIcon").onclick = ()=>{
+  profileMenu.style.display =
+    profileMenu.style.display==="block"?"none":"block";
+};
+
+/* STATE */
+let income=0, spent=0;
+
+/* AUTH STATE */
+onAuthStateChanged(auth,user=>{
+  if(user){
+    authDiv.style.display="none";
+    appDiv.style.display="block";
+    profileBar.style.display="block";
+    loadIncome();
+    loadExpenses();
+  }else{
+    authDiv.style.display="block";
+    appDiv.style.display="none";
+    profileBar.style.display="none";
+  }
+});
+
+/* INCOME */
+document.getElementById("saveIncome").onclick = async ()=>{
+  await setDoc(doc(db,"income",auth.currentUser.uid),{
+    amount:+incomeInput.value
+  });
+  loadIncome();
+};
+
+async function loadIncome(){
+  const snap = await getDoc(doc(db,"income",auth.currentUser.uid));
+  income = snap.exists()?snap.data().amount:0;
+  updateSummary();
+}
+
+/* EXPENSE */
+document.getElementById("addExpense").onclick = async ()=>{
+  await addDoc(collection(db,"expenses"),{
+    uid:auth.currentUser.uid,
+    amount:+amountInput.value,
+    category:categoryInput.value,
+    detail:detailInput.value,
+    date:new Date().toISOString()
+  });
+
+  if (Notification.permission === "granted") {
+    new Notification("Expense Added 💸", {
+      body:`₹${amountInput.value} spent on ${categoryInput.value}`
+    });
+  }
+
+  loadExpenses();
+};
+
+async function loadExpenses(){
+  expenseList.innerHTML="";
+  spent=0;
+
+  const snap = await getDocs(query(
+    collection(db,"expenses"),
+    where("uid","==",auth.currentUser.uid)
+  ));
+
+  snap.forEach(d=>{
+    const e=d.data();
+    spent+=e.amount;
+    expenseList.innerHTML+=`
+      <li>
+        ₹${e.amount} – <b>${e.category}</b>
+        ${e.detail?`(${e.detail})`:""}
+        <br><small>${new Date(e.date).toDateString()}</small>
+      </li>`;
+  });
+
+  updateSummary();
+}
+
+function updateSummary(){
+  incomeDisplay.textContent=`Income ₹${income}`;
+  spentDisplay.textContent=`Spent ₹${spent}`;
+  balanceDisplay.textContent=`Balance ₹${income-spent}`;
+}
+</script>
+</head>
+
+<body>
+
+<div class="profile-bar" id="profileBar">
+  <span id="profileIcon">👤 Profile</span>
+  <div class="profile-menu" id="profileMenu">
+    <label>
+      <input type="checkbox" id="themeToggle">
+      Dark mode
+    </label>
+    <label>
+      <input type="checkbox" id="staySignedIn">
+      Stay signed in
+    </label>
+    <button id="signoutBtn">Sign out</button>
+  </div>
+</div>
+
+<div class="container">
+
+<div id="auth" class="card">
+  <h2>Expense Tracker</h2>
+  <input id="email" placeholder="Email">
+  <input id="password" type="password" placeholder="Password">
+  <button id="signup">Signup</button>
+  <button id="login">Login</button>
+</div>
+
+<div id="app" style="display:none">
+
+  <div class="card">
+    <h2>Track your expenses</h2>
+  </div>
+
+  <div class="card">
+    <input id="income" placeholder="Income">
+    <button id="saveIncome">Save Income</button>
+  </div>
+
+  <div class="card summary">
+    <div id="incomeDisplay">Income ₹0</div>
+    <div id="spentDisplay">Spent ₹0</div>
+    <div id="balanceDisplay">Balance ₹0</div>
+  </div>
+
+  <div class="card">
+    <input id="amount" placeholder="Amount">
+    <input id="category" placeholder="Category (Food, Travel)">
+    <input id="detail" placeholder="Detail (Idli, Bus)">
+    <button id="addExpense">Add Expense</button>
+  </div>
+
+  <div class="card">
+    <ul id="expenseList"></ul>
+  </div>
+
+  <div class="card">
+    <a href="monthly.html">📊 View Monthly Expenses</a>
+  </div>
+
+</div>
+</div>
+
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

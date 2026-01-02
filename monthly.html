@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Monthly Expense Report</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+/* ===== THEME ===== */
+:root{
+  --primary:#0f766e;
+  --bg:#f0fdf4;
+  --card:#ffffff;
+  --text:#064e3b;
+  --muted:#065f46;
+}
+
+[data-theme="dark"]{
+  --primary:#22d3ee;
+  --bg:#020617;
+  --card:#020617;
+  --text:#e5e7eb;
+  --muted:#94a3b8;
+}
+
+*{box-sizing:border-box;font-family:Segoe UI,system-ui,sans-serif}
+
+body{
+  margin:0;
+  padding:20px;
+  background:var(--bg);
+  color:var(--text);
+  transition:background .3s,color .3s;
+}
+
+h1{text-align:center;margin-bottom:24px}
+
+.container{max-width:900px;margin:auto}
+
+/* ===== MONTH CARD ===== */
+.month-card{
+  background:var(--card);
+  padding:22px;
+  border-radius:16px;
+  margin-bottom:26px;
+  box-shadow:0 10px 30px rgba(0,0,0,0.12)
+}
+
+.month-title{
+  font-size:22px;
+  font-weight:700;
+  margin-bottom:18px;
+}
+
+/* ===== CHART ===== */
+.chart-bar{
+  background:rgba(0,0,0,0.08);
+  border-radius:10px;
+  overflow:hidden;
+  margin-bottom:12px;
+}
+
+.chart-fill{
+  background:var(--primary);
+  color:white;
+  padding:8px 12px;
+  font-size:14px;
+  font-weight:600;
+  border-radius:10px;
+
+  /* 🔥 ANIMATION */
+  width:0;
+  animation: growBar 0.9s ease-out forwards;
+}
+
+@keyframes growBar{
+  from{ width:0 }
+  to{ width:var(--target-width) }
+}
+
+/* ===== EXPENSE LIST ===== */
+.expense-item{
+  background:rgba(15,118,110,0.08);
+  padding:14px;
+  border-radius:12px;
+  margin-bottom:10px;
+  font-size:14px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:14px;
+  flex-wrap:wrap;
+  border:1px solid rgba(15,118,110,0.25);
+}
+
+[data-theme="dark"] .expense-item{
+  background:rgba(34,211,238,0.08);
+  border:1px solid rgba(34,211,238,0.25);
+}
+
+small{color:var(--muted)}
+
+/* ===== DELETE ===== */
+.delete-btn{
+  background:#ef4444;
+  color:white;
+  border:none;
+  padding:8px 12px;
+  border-radius:8px;
+  cursor:pointer;
+}
+.delete-btn:hover{opacity:.85}
+
+/* ===== BACK ===== */
+.back{
+  display:block;
+  margin:40px auto;
+  width:240px;
+  text-align:center;
+  padding:14px;
+  background:var(--primary);
+  color:black;
+  border-radius:14px;
+  text-decoration:none;
+  font-weight:700;
+}
+</style>
+
+<script type="module">
+/* 🌙 SYNC THEME */
+const savedTheme = localStorage.getItem("theme") || "light";
+document.documentElement.setAttribute("data-theme", savedTheme);
+
+window.addEventListener("storage", e=>{
+  if(e.key==="theme"){
+    document.documentElement.setAttribute("data-theme", e.newValue);
+  }
+});
+
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import {
+  getFirestore, collection, getDocs, query, where, deleteDoc, doc
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+/* FIREBASE */
+const app = initializeApp({
+  apiKey:"AIzaSyAv_RyMDv4nZ4bgQaGuyzupBGWx-8VSrG8",
+  authDomain:"expense-tracker-app-16113.firebaseapp.com",
+  projectId:"expense-tracker-app-16113"
+});
+const db = getFirestore(app);
+const auth = getAuth(app);
+
+const container = document.getElementById("container");
+
+onAuthStateChanged(auth, async user=>{
+  if(!user){
+    container.innerHTML="<p>Please login first.</p>";
+    return;
+  }
+  loadMonthly(user.uid);
+});
+
+async function loadMonthly(uid){
+  container.innerHTML="Loading...";
+
+  const snap = await getDocs(
+    query(collection(db,"expenses"), where("uid","==",uid))
+  );
+
+  if(snap.empty){
+    container.innerHTML="<p>No expenses found.</p>";
+    return;
+  }
+
+  const months={};
+
+  snap.forEach(d=>{
+    const e=d.data();
+    const id=d.id;
+    const dt=new Date(e.date);
+    const key=`${dt.getFullYear()}-${dt.getMonth()+1}`;
+
+    if(!months[key]){
+      months[key]={
+        label:dt.toLocaleString("default",{month:"long",year:"numeric"}),
+        categories:{},
+        items:[]
+      };
+    }
+
+    months[key].items.push({...e,id});
+    months[key].categories[e.category]=(months[key].categories[e.category]||0)+e.amount;
+  });
+
+  renderMonths(months,uid);
+}
+
+function renderMonths(months,uid){
+  container.innerHTML="";
+
+  Object.values(months).forEach(month=>{
+    const card=document.createElement("div");
+    card.className="month-card";
+    card.innerHTML=`<div class="month-title">${month.label}</div>`;
+
+    const max=Math.max(...Object.values(month.categories),1);
+
+    for(const c in month.categories){
+      const percent=(month.categories[c]/max)*100;
+      card.innerHTML+=`
+        <div class="chart-bar">
+          <div class="chart-fill" style="--target-width:${percent}%">
+            ${c} ₹${month.categories[c]}
+          </div>
+        </div>`;
+    }
+
+    month.items.forEach(e=>{
+      card.innerHTML+=`
+        <div class="expense-item">
+          <div>
+            ₹${e.amount} – <b>${e.category}</b>
+            ${e.detail?`(${e.detail})`:""}
+            <br><small>${new Date(e.date).toDateString()}</small>
+          </div>
+          <button class="delete-btn" onclick="deleteExpense('${e.id}','${uid}')">🗑️</button>
+        </div>`;
+    });
+
+    container.appendChild(card);
+  });
+}
+
+window.deleteExpense=async(id,uid)=>{
+  if(!confirm("Delete this expense?"))return;
+  await deleteDoc(doc(db,"expenses",id));
+  loadMonthly(uid);
+};
+</script>
+</head>
+
+<body>
+
+<h1>Monthly Expense Report</h1>
+
+<div class="container" id="container">Loading...</div>
+
+<a class="back" href="index.html">⬅ Back to Home</a>
+
+</body>
+</html>
+
+
